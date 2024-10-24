@@ -203,7 +203,7 @@ def main():
     hmm_model.emission_prob_mat = np.array([[0.4, 0.1, 0.2, 0.3], [0.3, 0.45, 0.2, 0.05]])
 
     hmm_model.stationary_dist = np.array([0.5, 0.5])
-    hmm_model.backward_algo()
+    hmm_model.backward_algo([])
 # def main():
 #     train_data, test_data = ready_data(data_csv)
 #     hmm_model = HMM(5, 3)
