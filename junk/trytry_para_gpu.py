@@ -12,18 +12,39 @@ class HMM:
         self.n_states = len(states)
         self.n_ob_symbols = len(ob_symbols)
 
-        # self.transition_prob_mat = np.zeros((self.n_states, self.n_states))
-        # self.emission_prob_mat = np.zeros((self.n_states, self.n_ob_symbols))
-        # self.stationary_dist = np.zeros(self.n_states)
+        # Initialize transition, emission, and initial state probabilities
         self.transition_prob_mat = np.random.rand(self.n_states, self.n_states)
         self.transition_prob_mat /= self.transition_prob_mat.sum(axis=1, keepdims=True)
-        
         self.emission_prob_mat = np.random.rand(self.n_states, self.n_ob_symbols)
         self.emission_prob_mat /= self.emission_prob_mat.sum(axis=1, keepdims=True)
-        
         self.stationary_dist = np.random.rand(self.n_states)
         self.stationary_dist /= self.stationary_dist.sum()
         self.normalize_matrices()
+
+        # self.transition_prob_mat = np.zeros((self.n_states, self.n_states))
+        # self.emission_prob_mat = np.zeros((self.n_states, self.n_ob_symbols))
+        # self.stationary_dist = np.zeros(self.n_states)
+
+        # # Initialize transition probabilities
+        # for i in range(self.n_states):
+        #     self.transition_prob_mat[i] = np.random.dirichlet(np.ones(self.n_states))
+
+        # # Initialize emission probabilities
+        # for i in range(self.n_states):
+        #     self.emission_prob_mat[i] = np.random.dirichlet(np.ones(self.n_ob_symbols))
+
+        # # Initialize transition probabilities with random values
+        # for i in range(self.n_states):
+        #     self.transition_prob_mat[i] = np.random.dirichlet(np.ones(self.n_states))
+
+        # # Initialize emission probabilities with random values
+        # for i in range(self.n_states):
+        #     self.emission_prob_mat[i] = np.random.dirichlet(np.ones(self.n_ob_symbols))
+
+        # # Initialize stationary distribution with random values
+        # self.stationary_dist = np.random.dirichlet(np.ones(self.n_states))
+
+        # self.normalize_matrices()
 
     def normalize_matrices(self):
         self.transition_prob_mat /= np.where(self.transition_prob_mat.sum(axis=1, keepdims=True) == 0, 1, self.transition_prob_mat.sum(axis=1, keepdims=True))
@@ -33,32 +54,35 @@ class HMM:
     def train(self, data_sequence):
         self.update_phase(data_sequence)
 
-    def veterbi_algorithm(self, observation_sequence):
+    def viterbi_algorithm(self, observation_sequence):
         T = len(observation_sequence)
-        V = np.zeros((T, self.n_states))
-        path = np.zeros((T, self.n_states), dtype=int)
+        delta = np.zeros((T, self.n_states))
+        psi = np.zeros((T, self.n_states), dtype=int)
 
-        for s in range(self.n_states):
-            V[0, s] = self.stationary_dist[s] * self.emission_prob_mat[s, int(observation_sequence[0])]
+        # Initialization
+        delta[0, :] = self.stationary_dist * self.emission_prob_mat[:, observation_sequence[0]]
 
         # Recursion
-        for t in range(1, T-1):
-            for s in range(self.n_states):
-                prob = V[t-1, :] * self.transition_prob_mat[:, s] * self.emission_prob_mat[s, int(observation_sequence[t])]
-            V[t, s] = np.max(prob)
-            path[t, s] = np.argmax(prob)
+        for t in range(1, T):
+            for j in range(self.n_states):
+                delta[t, j] = np.max(delta[t-1, :] * self.transition_prob_mat[:, j]) * self.emission_prob_mat[j, observation_sequence[t]]
+                psi[t, j] = np.argmax(delta[t-1, :] * self.transition_prob_mat[:, j])
 
         # Termination
-        best_path_prob = np.max(V[T-1, :])
-        best_last_state = np.argmax(V[T-1, :])
+        states_sequence = np.zeros(T, dtype=int)
+        states_sequence[-1] = np.argmax(delta[-1, :])
 
         # Path backtracking
-        best_path = np.zeros(T, dtype=int)
-        best_path[-1] = best_last_state
         for t in range(T-2, -1, -1):
-            best_path[t] = path[t+1, best_path[t+1]]
+            states_sequence[t] = psi[t+1, states_sequence[t+1]]
 
-        return best_path
+        return states_sequence
+    
+    def predict_next_observation(self, observation_sequence):
+        latest_state = self.viterbi_algorithm(observation_sequence)[-1]
+        next_state = np.argmax(self.transition_prob_mat[latest_state])
+        next_observation = np.argmax(self.emission_prob_mat[next_state])
+        return next_observation
    
     def update_phase(self, observation_sequence):
         alpha, beta = self.compute_alpha_beta(observation_sequence)
@@ -66,12 +90,12 @@ class HMM:
         xi = self.compute_xi(observation_sequence, alpha, beta)
         print("alpha:",alpha)
         print("::beta:",beta)
-        # print("::gamma: ", gamma)
-        # print("::xi: ", xi)
+        print("::gamma: ", gamma)
+        print("::xi: ", xi)
         gamma_sum = gamma.sum(axis=0)
-        print("gamma_sum: ", gamma_sum)
+        # print("gamma_sum: ", gamma_sum)
         xi_sum = xi.sum(axis=0)
-        print("xi_sum: ", xi_sum)
+        # print("xi_sum: ", xi_sum)
         self.update_parameters(gamma ,gamma_sum , xi_sum, observation_sequence)
 
     def update_parameters(self, gamma, gamma_sum, xi_sum, observation_sequence):
@@ -148,11 +172,11 @@ class HMM:
             if scales[t] > 0:
                 alpha_scaled[t, :] /= scales[t]
         
-        return alpha_scaled, scales
         # return alpha_scaled, scales
-        # return alpha
+        # return alpha_scaled, scales
+        return alpha
 
-    def backward_algo(self, observation_sequence, scales):
+    def backward_algo(self, observation_sequence, scales=None):
         A = torch.tensor(self.transition_prob_mat, device='cuda').clone().detach()
         B = torch.tensor(self.emission_prob_mat, device='cuda').clone().detach()
 
@@ -168,31 +192,33 @@ class HMM:
         for observation in range(T-2, -1, -1):
             for state in range(self.n_states):
                 beta[observation, state] = torch.sum(A[state, :] * B[:, observation_sequence[observation+1]] * beta[observation+1, :])
-        # beta /= beta.sum(axis=1, keepdim=True)
+        beta /= beta.sum(axis=1, keepdim=True)
 
         # Initialize beta_scaled
-        beta_scaled = torch.zeros(T, self.n_states, device='cuda')
+        # beta_scaled = torch.zeros(T, self.n_states, device='cuda')
 
-        # Base case: at time T-1, beta_T-1(i) = 1 for all states, then scale
-        beta_scaled[T-1, :] = 1.0
+        # # Base case: at time T-1, beta_T-1(i) = 1 for all states, then scale
+        # beta_scaled[T-1, :] = 1.0
 
-        # Iterate backward in time
-        for t in range(T - 2, -1, -1):
-            for i in range(self.n_states):
+        # # Iterate backward in time
+        # for t in range(T - 2, -1, -1):
+        #     for i in range(self.n_states):
 
-                beta_scaled[t, i] = torch.sum(A[i, :] * B[:, observation_sequence[t+1]] * beta_scaled[t+1, :])
-            beta_scaled[t, :] /= scales[t]
+        #         beta_scaled[t, i] = torch.sum(A[i, :] * B[:, observation_sequence[t+1]] * beta_scaled[t+1, :])
+        #     beta_scaled[t, :] /= scales[t]
 
-        return beta_scaled
-        # return beta
+        # return beta_scaled
+        return beta
 
     def compute_alpha_beta(self, observation_sequence):
         # print("Computing alpha and beta")
 
         observation_sequence = torch.tensor(observation_sequence, device='cuda').clone().detach()
 
-        alpha, scales  = self.forward_algo(observation_sequence)
-        beta = self.backward_algo(observation_sequence, scales)
+        # alpha, scales  = self.forward_algo(observation_sequence)
+        # beta = self.backward_algo(observation_sequence, scales)
+        alpha = self.forward_algo(observation_sequence)
+        beta = self.backward_algo(observation_sequence)
 
         alpha = alpha.cpu().numpy()
         beta = beta.cpu().numpy()
@@ -221,17 +247,17 @@ class HMM:
 
 def find_trands(data, threshold):
     trends = []
+    observations = [-1,0,1]
+    # observations = ['decrease','no-change','increase']
+    # observations = [0,1,2]
     for i in range(len(data) - 1):
         dif = data[i+1] - data[i]
         if abs(dif) < threshold:
-            trends.append(1)
-            # trends.append('no-change')
+            trends.append(observations[1])
         elif dif < 0:
-            trends.append(0)
-            # trends.append('decrease')
+            trends.append(observations[0])
         else:
-            trends.append(2)
-            # trends.append('increase')
+            trends.append(observations[2])
     return trends
 
 def ready_data(data_csv):
@@ -249,12 +275,14 @@ def ready_data(data_csv):
 
     # assert len(data_dict[header[0]]) >= 200, "Not enough data to split into 100 rows each for train and test."
 
-    train_data = {key: values[:len(values)//2] for key, values in data_dict.items()}
-    test_data = {key: values[len(values)//2:] for key, values in data_dict.items()}
+    # train_data = {key: values[:len(values)//2] for key, values in data_dict.items()}
+    # test_data = {key: values[len(values)//2:] for key, values in data_dict.items()}
     # train_data = {key: values[:20] for key, values in data_dict.items()}
     # test_data = {key: values[20:40] for key, values in data_dict.items()}
-    # train_data = {key: values[:100] for key, values in data_dict.items()}
-    # test_data = {key: values[100:200] for key, values in data_dict.items()}
+    train_data = {key: values[:100] for key, values in data_dict.items()}
+    test_data = {key: values[100:200] for key, values in data_dict.items()}
+    # train_data = {key: values[:3] for key, values in data_dict.items()}
+    # test_data = {key: values[3:6] for key, values in data_dict.items()}
     return train_data, test_data
 
 # def main():
@@ -277,20 +305,22 @@ def ready_data(data_csv):
     
 def main():
     train_data, test_data = ready_data(data_csv)
-    states = ('strong-negative','negative','neutral','positive','strong-positive')
+    # states = ('strong-negative','negative','neutral','positive','strong-positive')
+    states = ('very-strong-negative', 'strong-negative', 'negative', 'neutral', 'positive', 'strong-positive', 'very-strong-positive')
     possible_observation = ('decrease','no-change','increase')
     hmm_model = HMM(states, possible_observation)
     open_price_hmm = cp.deepcopy(hmm_model)
     
-    # print("Initial Model:")
-    # print("Transition Probabilities:")
-    # print(open_price_hmm.transition_prob_mat)
-    # print("Emission Probabilities:")
-    # print(open_price_hmm.emission_prob_mat)
-    # print("Stationary Distribution:")
-    # print(open_price_hmm.stationary_dist)
+    print("Initial Model:")
+    print("Transition Probabilities:")
+    print(open_price_hmm.transition_prob_mat)
+    print("Emission Probabilities:")
+    print(open_price_hmm.emission_prob_mat)
+    print("Stationary Distribution:")
+    print(open_price_hmm.stationary_dist)
 
-    open_price_train_trend = find_trands(train_data['Open'], 50)
+    key = 'Open'
+    open_price_train_trend = find_trands(train_data[key], 50)
     
     # Train and test on the same data until the model is accurate
     # while 1:
@@ -305,20 +335,22 @@ def main():
     #     print(f"Iteration accuracy: {accuracy}")
     #     if accuracy >= 0.95:  # Adjust the accuracy threshold as needed
     #         break
-    
+    # for i in range(10):
     open_price_hmm.train(open_price_train_trend)
+
     print("Training done.")
 
-    open_price_test_trend = find_trands(test_data['Open'], 50)
+    open_price_test_trend = find_trands(test_data[key], 50)
 
     last_observation_no = len(open_price_test_trend)
     last_observation = open_price_train_trend[-last_observation_no:]
     predicted_sequence = last_observation.copy()
 
-    for _ in range(len(open_price_test_trend)):
-        best_path = open_price_hmm.veterbi_algorithm(predicted_sequence)
-        next_observation = best_path[-1]
-        predicted_sequence.append(next_observation)
+    for _ in range(last_observation_no):
+        predicted_observation = open_price_hmm.predict_next_observation(predicted_sequence)
+
+        # print(predicted_observation)
+        predicted_sequence.append(predicted_observation)
         predicted_sequence = predicted_sequence[1:]
 
     # predicted_sequence = predicted_sequence[-len(open_price_test_trend):]
@@ -354,14 +386,17 @@ def main():
     # plt.savefig('open_price_trend_prediction.png')
 
     plt.figure(figsize=(12, 6))
-    plt.plot(open_price_test_trend, label='Actual Open Price Trend')
-    # plt.plot(range(len(open_price_test_trend)), predicted_sequence[-len(open_price_test_trend):], label='Predicted Open Price Trend', linestyle='--')
-    plt.plot(range(len(open_price_test_trend)), predicted_sequence, label='Predicted Open Price Trend', linestyle='--')
+    plt.plot(open_price_test_trend, label=f'Actual {key} Price Trend')
+    plt.plot(range(len(open_price_test_trend)), predicted_sequence, label=f'Predicted {key} Price Trend', linestyle='--')
     plt.xlabel('Time')
     plt.ylabel('Trend')
-    plt.title('Actual vs Predicted Open Price Trend')
+    plt.title(f'Actual vs Predicted {key} Price Trend')
     plt.legend()
-    plt.savefig('open_price_trend_comparison.png')
+    
+    # Space out x-axis labels
+    plt.xticks(ticks=range(0, len(open_price_test_trend), max(1, len(open_price_test_trend) // 10)), rotation=45)
+    
+    plt.savefig(f'{key}_price_trend_comparison.png')
 
 if __name__ == '__main__':
     main()
