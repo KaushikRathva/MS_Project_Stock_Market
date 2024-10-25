@@ -90,7 +90,7 @@ class HMM:
         # Update emission probabilities
         for i in range(self.n_states):
             for k in range(self.n_ob_symbols):
-                print((np.array(observation_sequence) == k))
+                # print((np.array(observation_sequence) == k))
                 B_new[i, k] = np.sum(gamma[:, i] * (np.array(observation_sequence) == k))
             B_new[i] /= gamma_sum[i]
 
@@ -120,9 +120,39 @@ class HMM:
             for state in range(self.n_states):
                 alpha[observation, state] = torch.sum(alpha[observation-1, :] * A[:, state]) * B[state, observation_sequence[observation]]
 
-        return alpha
+        # alpha_scaled = torch.zero_like(alpha)
+        # scales = torch.zeros(T, device='cuda')
 
-    def backward_algo(self, observation_sequence):
+        # alpha_scaled [0,:] = lambda_hmm * B[:, observation_sequence[0]]
+        # scales[0] = torch.sum(alpha_scaled[0,:])
+
+#################################################################
+        # calculation of alpha scalled
+#################################################################
+        # Initialize alpha_scaled and scaling factors
+        alpha_scaled = torch.zeros((T, self.n_states), device='cuda')
+        scales = torch.zeros(T, device='cuda')
+        
+        # Base case: at time t=0
+        alpha_scaled[0, :] = lambda_hmm * B[:, observation_sequence[0]]
+        scales[0] = torch.sum(alpha_scaled[0, :])
+        if scales[0] > 0:
+            alpha_scaled[0, :] /= scales[0]
+        
+        # Iterate forward in time
+        for t in range(1, T):
+            for j in range(self.n_states):
+                alpha_scaled[t, j] = torch.sum(alpha_scaled[t-1, :] * A[:, j]) * B[j, observation_sequence[t]]
+            # Scaling to avoid underflow
+            scales[t] = torch.sum(alpha_scaled[t, :])
+            if scales[t] > 0:
+                alpha_scaled[t, :] /= scales[t]
+        
+        return alpha_scaled, scales
+        # return alpha_scaled, scales
+        # return alpha
+
+    def backward_algo(self, observation_sequence, scales):
         A = torch.tensor(self.transition_prob_mat, device='cuda').clone().detach()
         B = torch.tensor(self.emission_prob_mat, device='cuda').clone().detach()
 
@@ -139,15 +169,30 @@ class HMM:
             for state in range(self.n_states):
                 beta[observation, state] = torch.sum(A[state, :] * B[:, observation_sequence[observation+1]] * beta[observation+1, :])
         # beta /= beta.sum(axis=1, keepdim=True)
-        return beta
+
+        # Initialize beta_scaled
+        beta_scaled = torch.zeros(T, self.n_states, device='cuda')
+
+        # Base case: at time T-1, beta_T-1(i) = 1 for all states, then scale
+        beta_scaled[T-1, :] = 1.0
+
+        # Iterate backward in time
+        for t in range(T - 2, -1, -1):
+            for i in range(self.n_states):
+
+                beta_scaled[t, i] = torch.sum(A[i, :] * B[:, observation_sequence[t+1]] * beta_scaled[t+1, :])
+            beta_scaled[t, :] /= scales[t]
+
+        return beta_scaled
+        # return beta
 
     def compute_alpha_beta(self, observation_sequence):
         # print("Computing alpha and beta")
 
         observation_sequence = torch.tensor(observation_sequence, device='cuda').clone().detach()
 
-        alpha = self.forward_algo(observation_sequence)
-        beta = self.backward_algo(observation_sequence)
+        alpha, scales  = self.forward_algo(observation_sequence)
+        beta = self.backward_algo(observation_sequence, scales)
 
         alpha = alpha.cpu().numpy()
         beta = beta.cpu().numpy()
@@ -179,13 +224,13 @@ def find_trands(data, threshold):
     for i in range(len(data) - 1):
         dif = data[i+1] - data[i]
         if abs(dif) < threshold:
-            trends.append(0)
+            trends.append(1)
             # trends.append('no-change')
         elif dif < 0:
-            trends.append(-1)
+            trends.append(0)
             # trends.append('decrease')
         else:
-            trends.append(1)
+            trends.append(2)
             # trends.append('increase')
     return trends
 
@@ -204,10 +249,10 @@ def ready_data(data_csv):
 
     # assert len(data_dict[header[0]]) >= 200, "Not enough data to split into 100 rows each for train and test."
 
-    # train_data = {key: values[:len(values)//2] for key, values in data_dict.items()}
-    # test_data = {key: values[len(values)//2:] for key, values in data_dict.items()}
-    train_data = {key: values[:20] for key, values in data_dict.items()}
-    test_data = {key: values[20:40] for key, values in data_dict.items()}
+    train_data = {key: values[:len(values)//2] for key, values in data_dict.items()}
+    test_data = {key: values[len(values)//2:] for key, values in data_dict.items()}
+    # train_data = {key: values[:20] for key, values in data_dict.items()}
+    # test_data = {key: values[20:40] for key, values in data_dict.items()}
     # train_data = {key: values[:100] for key, values in data_dict.items()}
     # test_data = {key: values[100:200] for key, values in data_dict.items()}
     return train_data, test_data
@@ -266,7 +311,7 @@ def main():
 
     open_price_test_trend = find_trands(test_data['Open'], 50)
 
-    last_observation_no = 20
+    last_observation_no = len(open_price_test_trend)
     last_observation = open_price_train_trend[-last_observation_no:]
     predicted_sequence = last_observation.copy()
 
