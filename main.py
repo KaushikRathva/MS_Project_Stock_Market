@@ -13,6 +13,7 @@ class HMM:
         self.n_states = len(states)
         self.n_ob_symbols = len(ob_symbols)
 
+        print(self.ob_symbols)
         # Initialize transition, emission, and initial state probabilities
         self.transition_prob_mat = np.random.rand(self.n_states, self.n_states)
         self.transition_prob_mat /= self.transition_prob_mat.sum(axis=1, keepdims=True)
@@ -25,9 +26,9 @@ class HMM:
 
     def load_model(self):
         try:
-            self.transition_prob_mat = np.load('transition_prob_mat.npy')
-            self.emission_prob_mat = np.load('emission_prob_mat.npy')
-            self.stationary_dist = np.load('stationary_dist.npy')
+            self.transition_prob_mat = np.load('models/transition_prob_mat.npy')
+            self.emission_prob_mat = np.load('models/emission_prob_mat.npy')
+            self.stationary_dist = np.load('models/stationary_dist.npy')
         except FileNotFoundError:
             print("Model files not found. Using randomly initialized matrices.")
 
@@ -39,35 +40,7 @@ class HMM:
  
     def train(self, data_sequence):
         self.update_phase(data_sequence)
- 
- 
-    # def viterbi_algorithm(self, observation_sequence):
-    #     T = len(observation_sequence)
-    #     V = np.zeros((T, self.n_states))
-    #     path = np.zeros((T, self.n_states), dtype=int)
- 
-    #     for s in range(self.n_states):
-    #         V[0, s] = self.stationary_dist[s] * self.emission_prob_mat[s, int(observation_sequence[0])]
- 
-    #     # Recursion
-    #     for t in range(1, T-1):
-    #         for s in range(self.n_states):
-    #             prob = V[t-1, :] * self.transition_prob_mat[:, s] * self.emission_prob_mat[s, int(observation_sequence[t])]
-    #             V[t, s] = np.max(prob)
-    #             path[t, s] = np.argmax(prob)
- 
-    #     # Termination
-    #     best_path_prob = np.max(V[T-1, :])
-    #     best_last_state = np.argmax(V[T-1, :])
- 
-    #     # Path backtracking
-    #     best_path = np.zeros(T, dtype=int)
-    #     best_path[-1] = best_last_state
-    #     for t in range(T-2, -1, -1):
-    #         best_path[t] = path[t+1, best_path[t+1]]
- 
-    #     return best_path
-    
+     
     def viterbi_algorithm(self, observation_sequence):
         T = len(observation_sequence)
         delta = np.zeros((T, self.n_states))
@@ -102,6 +75,7 @@ class HMM:
     #     # print(",next_observation: ", next_observation)
     #     # print()
     #     return next_observation
+    
     def predict_next_observation(self, observation_sequence):
         latest_state = self.viterbi_algorithm(observation_sequence)[-1]
         next_observation_prob = np.zeros(self.n_ob_symbols)
@@ -228,29 +202,30 @@ class HMM:
                 xi[t] /= xi_sum
         return xi
  
-def find_trands(data, threshold):
+def find_trands(data, possible_obsrvations, window_size=5):
     # mean = np.mean(data)
     # standard_deviation = np.std(data)
     # print(mean)
     # print(standard_deviation)
     
     trends = []
-    observations = [-1,0,1]
-    # observations = ['decrease','no-change','increase']
-    # observations = [0,1,2]
-    for i in range(len(data) - 1):
-        dif = data[i+1] - data[i]
-        if abs(dif) < threshold:
-            trends.append(observations[1])
-        elif dif < 0:
-            trends.append(observations[0])
-        else:
-            trends.append(observations[2])
-    # for i in range(len(data)):
-    #     trends.append(round((data[i] - mean) / standard_deviation))
+    for i in range(len(data) - window_size + 1):
+        window = data[i:i + window_size]
+        mean = np.mean(window)
+        std_dev = np.std(window)
+        
+        num_bins = len(possible_obsrvations)
+        bin_size = 2 * std_dev / (num_bins - 1)
+        
+        for i in range(num_bins):
+            lower_bound = mean - std_dev + i * bin_size
+            upper_bound = lower_bound + bin_size
+            if lower_bound <= window[-1] < upper_bound:
+                trends.append(possible_obsrvations[i])
+                break
+    
 
-    # print(trends)
-    return trends,observations
+    return trends
  
 def ready_data(data_csv):
     raw_data = np.genfromtxt(data_csv, delimiter=',', dtype=None, encoding=None)
@@ -273,7 +248,7 @@ def ready_data(data_csv):
 
 
     train_len = 300
-    test_len = 20
+    test_len = 40
     # Randomly select a starting point for the consecutive chunk
     start_index = np.random.randint(0, len(data_dict['Open']) - train_len - test_len)
 
@@ -288,17 +263,17 @@ def main():
     key = 'Low'
     train_data = train_data[key]
     test_data = test_data[key]
-    threshold = 100
     
-    train_trend,possible_observation = find_trands(train_data, threshold)
-    test_trend,possible_observation = find_trands(test_data, threshold)
-
     # states = ('strong-negative', 'negative', 'neutral', 'positive', 'strong-positive')
     states = ('dont-buy', 'very-strong-negative', 'strong-negative', 'negative', 'neutral', 'positive', 'strong-positive', 'very-strong-positive', 'buy-right-now')
-    # possible_observation = ('decrease', 'no-change', 'increase')
-    hmm_model = HMM(states, possible_observation)
+    possible_observation = ('decrease', 'no-change', 'increase')
+    possible_observation_enum = list(range(len(possible_observation)))
+    hmm_model = HMM(states, possible_observation_enum)
     # hmm_model = HMM(7,len(possible_observ))
     hmm = cp.deepcopy(hmm_model)
+    train_trend = find_trands(train_data, possible_observation_enum,10)
+    test_trend = find_trands(test_data, possible_observation_enum,10)
+
 
     print("Initial Model:")
     print("Transition Probabilities:")
@@ -323,16 +298,16 @@ def main():
  
     plt.figure(figsize=(12, 6))
     plt.plot(test_trend, label=f'Actual {key} Price Trend')
-    plt.plot(predicted_observations, label=f'Predicted {key} Price Trend', linestyle='--')
+    plt.plot([possible_observation[i] for i in predicted_observations], label=f'Predicted {key} Price Trend', linestyle='--')
     plt.xlabel('Time')
     plt.ylabel('Trend')
     plt.title(f'Actual vs Predicted {key} Price Trend')
     plt.legend()
 
     # Save the model parameters
-    np.save('transition_prob_mat.npy', hmm.transition_prob_mat)
-    np.save('emission_prob_mat.npy', hmm.emission_prob_mat)
-    np.save('stationary_dist.npy', hmm.stationary_dist)
+    np.save('models/transition_prob_mat.npy', hmm.transition_prob_mat)
+    np.save('models/emission_prob_mat.npy', hmm.emission_prob_mat)
+    np.save('models/stationary_dist.npy', hmm.stationary_dist)
  
     # # last_observation_no = len(open_price_test_trend)
     # initial_observation_lenght = 10
