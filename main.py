@@ -84,13 +84,16 @@ class HMM:
         return np.argmax(next_observation_prob)
     
     def update_phase(self, observation_sequence):
-        alpha, beta, scales = self.compute_alpha_beta(observation_sequence)
-        gamma = self.compute_gamma(alpha, beta, scales)
-        xi = self.compute_xi(observation_sequence, alpha, beta, scales)
-        gamma_sum = gamma.sum(axis=0)
+        for i in range(10):
+            alpha, beta, scales = self.compute_alpha_beta(observation_sequence)
+            gamma = self.compute_gamma(alpha, beta, scales)
+            xi = self.compute_xi(observation_sequence, alpha, beta, scales)
+            gamma_sum = gamma.sum(axis=0)
+    
+            xi_sum = xi.sum(axis=0)
+            self.update_parameters(gamma, gamma_sum, xi_sum, observation_sequence)
 
-        xi_sum = xi.sum(axis=0)
-        self.update_parameters(gamma, gamma_sum, xi_sum, observation_sequence)
+
  
     def update_parameters(self, gamma, gamma_sum, xi_sum, observation_sequence):
         # Baum-Welch algorithm for updating parameters
@@ -202,31 +205,74 @@ class HMM:
                 xi[t] /= xi_sum
         return xi
  
-def find_trands(data, possible_obsrvations, threshold=50):
+# def find_trends(data, window_size=5, num_observations=3):
+#     """
+#     Find trends in the data using a moving average and dynamic thresholding.
+    
+#     Parameters:
+#     - data: List of prices.
+#     - window_size: Window size for the moving average.
+#     - num_observations: Number of observation categories.
+    
+#     Returns:
+#     - trends: List of trend observations.
+#     - observations: List of possible observation symbols.
+#     """
+#     trends = []
+#     observations = list(range(num_observations))  # E.g., [0, 1, 2, 3, 4] for 5 categories
+
+#     # Calculate the moving average
+#     moving_avg = np.convolve(data, np.ones(window_size) / window_size, mode='valid')
+
+#     # Define the thresholds based on the number of observations
+#     threshold_bounds = np.linspace(-1, 1, num_observations + 1)  # E.g., [-1, -0.5, 0, 0.5, 1] for 5 categories
+
+#     for i in range(len(data) - 1):
+#         if i < len(moving_avg):
+#             current_price = moving_avg[i]
+#         else:
+#             current_price = data[i]
+
+#         next_price = data[i + 1]
+#         dif = next_price - current_price
+
+#         # Normalize the difference to a value between -1 and 1
+#         normalized_dif = dif / current_price
+
+#         # Classify the normalized difference into one of the categories
+#         for j in range(num_observations):
+#             if threshold_bounds[j] <= normalized_dif < threshold_bounds[j + 1]:
+#                 trends.append(observations[j])
+#                 break
+#         else:
+#             # If the difference exceeds the bounds (should not normally happen)
+#             trends.append(observations[-1])
+
+#     return trends, observations
+
+def find_trends(data, threshold):
     # mean = np.mean(data)
     # standard_deviation = np.std(data)
     # print(mean)
     # print(standard_deviation)
-    num_bins = len(possible_obsrvations)
-    mid_pint = num_bins//2
+    
     trends = []
-    for i in range(len(data)):
-        diff = data[i] - data[i-1]
-        if abs(diff) <= threshold:
-            trends.append(possible_obsrvations[mid_pint])
+    # observations = [-1,0,1]
+    # observations = ['decrease','no-change','increase']
+    observations = [0,1,2]
+    for i in range(len(data) - 1):
+        dif = data[i+1] - data[i]
+        if abs(dif) < threshold:
+            trends.append(observations[1])
+        elif dif < 0:
+            trends.append(observations[0])
         else:
-            if diff > 0:
-                index = int(diff // threshold) + mid_pint
-                if index >= num_bins:
-                    index = num_bins - 1
-                trends.append(possible_obsrvations[index])
-            else:
-                index = int(diff // threshold) - mid_pint
-                if index < 0:
-                    index = 0
-                trends.append(possible_obsrvations[index])            
-    return trends
- 
+            trends.append(observations[2])
+    # for i in range(len(data)):
+    #     trends.append(round((data[i] - mean) / standard_deviation))
+    # print(trends)
+    return trends,observations
+
 def ready_data(data_csv):
     raw_data = np.genfromtxt(data_csv, delimiter=',', dtype=None, encoding=None)
     header = raw_data[0]
@@ -265,13 +311,22 @@ def main():
     # states = ('strong-negative', 'negative', 'neutral', 'positive', 'strong-positive')
     states = ('dont-buy', 'very-strong-negative', 'strong-negative', 'negative', 'neutral', 'positive', 'strong-positive', 'very-strong-positive', 'buy-right-now')
     possible_observation = ('decrease', 'no-change', 'increase')
+    
     # possible_observation = ('strong-decrease', 'decrease', 'no-change', 'increase', 'strong-increase')
     possible_observation_enum = list(range(len(possible_observation)))
+
+    window_size = 3
+    num_observations = 5  # Change this to 5, 7, 9, etc.
+    # train_trend, observations = find_trends(train_data, window_size, num_observations)
+    # test_trend, _ = find_trends(test_data, window_size, num_observations)
+    train_trend = find_trends(train_data, 25)
+    test_trend = find_trends(test_data, 25)
+
     hmm_model = HMM(states, possible_observation_enum)
     # hmm_model = HMM(7,len(possible_observ))
     hmm = cp.deepcopy(hmm_model)
-    train_trend = find_trands(train_data, possible_observation_enum,10)
-    test_trend = find_trands(test_data, possible_observation_enum,10)
+    
+
 
 
     print("Initial Model:")
@@ -299,15 +354,15 @@ def main():
     error_rate = error_count / len(test_trend)
     print(f'Error Rate: {error_rate * 100:.2f}%')
  
-    # plt.figure(figsize=(50, 25))
-    # plt.plot(test_trend, label=f'Actual {key} Price Trend')
-    # plt.plot(predicted_observations, label=f'Predicted {key} Price Trend', linestyle='--')
-    # plt.yticks(ticks=possible_observation_enum, labels=possible_observation)
-    # plt.xlabel('Time')
-    # plt.ylabel('Trend')
-    # # plt.title(f'Actual vs Predicted {key} Price Trend')
-    # plt.title(f'Actual vs Predicted {key} Price Trend\nError Rate: {error_rate * 100:.2f}%')
-    # plt.legend()
+    plt.figure(figsize=(24, 12))
+    plt.plot(test_trend, label=f'Actual {key} Price Trend')
+    plt.plot(predicted_observations, label=f'Predicted {key} Price Trend', linestyle='--')
+    plt.yticks(ticks=possible_observation_enum, labels=possible_observation)
+    plt.xlabel('Time')
+    plt.ylabel('Trend')
+    # plt.title(f'Actual vs Predicted {key} Price Trend')
+    plt.title(f'Actual vs Predicted {key} Price Trend\nError Rate: {error_rate * 100:.2f}%')
+    plt.legend()
 
     # Save the model parameters
     np.save('models/transition_prob_mat.npy', hmm.transition_prob_mat)
