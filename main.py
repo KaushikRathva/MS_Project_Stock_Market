@@ -40,6 +40,7 @@ class HMM:
     def train(self, data_sequence):
         self.update_phase(data_sequence)
  
+ 
     # def viterbi_algorithm(self, observation_sequence):
     #     T = len(observation_sequence)
     #     V = np.zeros((T, self.n_states))
