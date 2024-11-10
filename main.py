@@ -119,7 +119,7 @@ class HMM:
  
         self.transition_prob_mat = A_new
         self.emission_prob_mat = B_new
-        self.stationary_dist = lambda_new
+        self.stationary_dist = lambda_new / lambda_new.sum()
  
     def forward_algo(self, observation_sequence):
         A = torch.tensor(self.transition_prob_mat, device='cuda').clone().detach()
@@ -202,29 +202,29 @@ class HMM:
                 xi[t] /= xi_sum
         return xi
  
-def find_trands(data, possible_obsrvations, window_size=5):
+def find_trands(data, possible_obsrvations, threshold=50):
     # mean = np.mean(data)
     # standard_deviation = np.std(data)
     # print(mean)
     # print(standard_deviation)
-    
+    num_bins = len(possible_obsrvations)
+    mid_pint = num_bins//2
     trends = []
-    for i in range(len(data) - window_size + 1):
-        window = data[i:i + window_size]
-        mean = np.mean(window)
-        std_dev = np.std(window)
-        
-        num_bins = len(possible_obsrvations)
-        bin_size = 2 * std_dev / (num_bins - 1)
-        
-        for i in range(num_bins):
-            lower_bound = mean - std_dev + i * bin_size
-            upper_bound = lower_bound + bin_size
-            if lower_bound <= window[-1] < upper_bound:
-                trends.append(possible_obsrvations[i])
-                break
-    
-
+    for i in range(len(data)):
+        diff = data[i] - data[i-1]
+        if abs(diff) <= threshold:
+            trends.append(possible_obsrvations[mid_pint])
+        else:
+            if diff > 0:
+                index = int(diff // threshold) + mid_pint
+                if index >= num_bins:
+                    index = num_bins - 1
+                trends.append(possible_obsrvations[index])
+            else:
+                index = int(diff // threshold) - mid_pint
+                if index < 0:
+                    index = 0
+                trends.append(possible_obsrvations[index])            
     return trends
  
 def ready_data(data_csv):
@@ -242,20 +242,18 @@ def ready_data(data_csv):
  
     # train_data = {key: values[:len(values)//2] for key, values in data_dict.items()}
     # test_data = {key: values[len(values)//2:] for key, values in data_dict.items()}
-    # Ensure there are enough data points
-    if len(data_dict['Open']) < 220:
-        raise ValueError("Not enough data points for the specified train and test split.")
 
+    train_data = {key: values for key, values in data_dict.items()}
+    # test_data = {key: values[len(values)-20:] for key, values in data_dict.items()}
+    test_data = {key: values[:20] for key, values in data_dict.items()}
 
-    train_len = 300
-    test_len = 40
-    # Randomly select a starting point for the consecutive chunk
-    start_index = np.random.randint(0, len(data_dict['Open']) - train_len - test_len)
+    # train_len = 400
+    # test_len = 20
+    # # # Randomly select a starting point for the consecutive chunk
+    # start_index = np.random.randint(0, len(data_dict['Open']) - train_len - test_len)
+    # train_data = {key: values[start_index:start_index + train_len] for key, values in data_dict.items()}
+    # test_data = {key: values[(start_index + train_len + 1):(start_index + train_len + test_len +1)] for key, values in data_dict.items()}
 
-
-
-    train_data = {key: values[start_index:start_index + train_len] for key, values in data_dict.items()}
-    test_data = {key: values[(start_index + train_len + 1):(start_index + train_len + test_len +1)] for key, values in data_dict.items()}
     return train_data, test_data
  
 def main():
@@ -267,6 +265,7 @@ def main():
     # states = ('strong-negative', 'negative', 'neutral', 'positive', 'strong-positive')
     states = ('dont-buy', 'very-strong-negative', 'strong-negative', 'negative', 'neutral', 'positive', 'strong-positive', 'very-strong-positive', 'buy-right-now')
     possible_observation = ('decrease', 'no-change', 'increase')
+    # possible_observation = ('strong-decrease', 'decrease', 'no-change', 'increase', 'strong-increase')
     possible_observation_enum = list(range(len(possible_observation)))
     hmm_model = HMM(states, possible_observation_enum)
     # hmm_model = HMM(7,len(possible_observ))
@@ -276,12 +275,12 @@ def main():
 
 
     print("Initial Model:")
-    print("Transition Probabilities:")
-    print(hmm.transition_prob_mat)
-    print("Emission Probabilities:")
-    print(hmm.emission_prob_mat)
-    print("Stationary Distribution:")
-    print(hmm.stationary_dist)
+    # print("Transition Probabilities:")
+    # print(hmm.transition_prob_mat)
+    # print("Emission Probabilities:")
+    # print(hmm.emission_prob_mat)
+    # print("Stationary Distribution:")
+    # print(hmm.stationary_dist)
     
     hmm.train(train_trend)
     print("Training done.")
@@ -295,14 +294,20 @@ def main():
         predicted_observations.append(predicted_observation)
         context_observations.append(obs)
         context_observations = context_observations[1:]
+    # Calculate the error rate
+    error_count = sum(1 for actual, predicted in zip(test_trend, predicted_observations) if actual != predicted)
+    error_rate = error_count / len(test_trend)
+    print(f'Error Rate: {error_rate * 100:.2f}%')
  
-    plt.figure(figsize=(12, 6))
-    plt.plot(test_trend, label=f'Actual {key} Price Trend')
-    plt.plot([possible_observation[i] for i in predicted_observations], label=f'Predicted {key} Price Trend', linestyle='--')
-    plt.xlabel('Time')
-    plt.ylabel('Trend')
-    plt.title(f'Actual vs Predicted {key} Price Trend')
-    plt.legend()
+    # plt.figure(figsize=(50, 25))
+    # plt.plot(test_trend, label=f'Actual {key} Price Trend')
+    # plt.plot(predicted_observations, label=f'Predicted {key} Price Trend', linestyle='--')
+    # plt.yticks(ticks=possible_observation_enum, labels=possible_observation)
+    # plt.xlabel('Time')
+    # plt.ylabel('Trend')
+    # # plt.title(f'Actual vs Predicted {key} Price Trend')
+    # plt.title(f'Actual vs Predicted {key} Price Trend\nError Rate: {error_rate * 100:.2f}%')
+    # plt.legend()
 
     # Save the model parameters
     np.save('models/transition_prob_mat.npy', hmm.transition_prob_mat)
@@ -329,9 +334,26 @@ def main():
     # plt.title(f'Actual vs Predicted {key} Price Trend')
     # plt.legend()
     plt.savefig(f'{key}_price_trend_comparison.png')
+    return error_rate
  
 if __name__ == '__main__':
-    main()
+    error_rates = []
+    for i in range(100):
+        error_rate = main()
+        error_rates.append(error_rate)
+    
+    min_error_rate = min(error_rates)
+    max_error_rate = max(error_rates)
+    print(f'Error Rate Range: {min_error_rate * 100:.2f}% - {max_error_rate * 100:.2f}%')
+    plt.figure(figsize=(10, 5))
+    plt.plot([rate * 100 for rate in error_rates], label='Error Rate (%)')
+    plt.xlabel('Iteration')
+    plt.ylabel('Error Rate')
+    plt.title('Error Rate over Multiple Runs')
+    plt.legend()
+    plt.savefig('error_rate_plot.png')
+
+    # main()
 
 
 
